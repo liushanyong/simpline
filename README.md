@@ -46,7 +46,8 @@ const std::vector<Eigen::Vector3f> points = {
 int main(int argc, char** argv)
 {
 	const float speed = 0.5;
-	simpline<float>::ConstantSpeedSpline trajectory(points, speed);
+	const bool closed = false;
+	simpline<float>::ConstantSpeedSpline trajectory(points, speed, closed);
 	
 	float currentTime = 0.0;
 	while(currentTime <= trajectory.getDuration())
@@ -63,3 +64,27 @@ int main(int argc, char** argv)
 	return 0;
 }
 ```
+
+## Additional APIs
+
+- Closed curve toggle:
+  - `ParametrizedSpline(parameterValues, points, closed)`
+  - `ConstantSpeedSpline(points, speed, closed)`
+- Second derivative:
+  - `ParametrizedSpline::getSecondDerivative(parameterValue)`
+  - `ConstantSpeedSpline::getSecondDerivative(time)`
+- Closest point queries:
+  - `getClosestParameterValue(...)` / `getClosestTime(...)`
+  - `getClosestPoint(...)`
+  - `getClosestDistance(...)`
+- Arc length from start:
+  - `ParametrizedSpline::getLengthFromStart(parameterValue)`
+  - `ConstantSpeedSpline::getLengthFromStart(time)`
+- Resampling:
+  - `resampleByCount(sampleCount, includeEndPoint)`
+  - `resampleByDistance(distanceStep, includeEndPoint)`
+
+### Notes for closed curves
+
+- Closed mode enforces periodic constraints for the parametrized spline.
+- For closed resampling, `includeEndPoint=true` appends the loop end point (same geometric location as start).
