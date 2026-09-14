@@ -1,170 +1,364 @@
 #include "Simpline.h"
 #include "Constants.h"
+#include <cmath>
+#include <stdexcept>
+#include <limits>
 
 template<typename T>
-simpline<T>::ConstantSpeedSpline::ConstantSpeedSpline()
+simpline<T>::ConstantSpeedSpline::ConstantSpeedSpline():
+		parametrizedSpline(), speed(0), duration(0), closed(false), initialized(false)
 {
 }
 
 template<typename T>
-simpline<T>::ConstantSpeedSpline::ConstantSpeedSpline(const std::vector<simpline<T>::Vector3>& points, const T& speed):
-		timeParameterValues(), parametrizedSpline(), speed(speed), duration()
+simpline<T>::ConstantSpeedSpline::ConstantSpeedSpline(const std::vector<simpline<T>::Vector3>& points, const T& speed, const bool& closed):
+		parametrizedSpline(), speed(speed), duration(0), closed(closed), initialized(false)
 {
 	if(points.size() < 2)
 	{
 		throw std::runtime_error("Point list must contain at least two items!");
 	}
-	
+
 	if(speed <= 0)
 	{
 		throw std::runtime_error("Speed must be above 0!");
 	}
-	
-	std::vector<T> parameterValues = { 0 };
-	for(size_t i = 1; i < points.size(); i++)
-	{
-		parameterValues.push_back(parameterValues[i - 1] + (points[i] - points[i - 1]).norm());
-	}
-	parametrizedSpline = ParametrizedSpline(parameterValues, points);
-	
-	T splineLength = parametrizedSpline.getLength();
-	duration = splineLength / speed;
-	
-	T time = 0;
-	for(size_t i = 0; i < parameterValues.size() - 1; i++)
-	{
-		timeParameterValues[time] = parameterValues[i];
-		time += (parametrizedSpline.getLength(parameterValues[i], parameterValues[i + 1]) / splineLength) * duration;
-	}
-	timeParameterValues[duration] = parameterValues[parameterValues.size() - 1];
-}
 
-template<typename T>
-typename simpline<T>::Vector3 simpline<T>::ConstantSpeedSpline::getValue(const T& time) const
-{
-	if(timeParameterValues.size() == 0)
+	std::vector<simpline<T>::Vector3> splinePoints = points;
+	if(this->closed && splinePoints.size() > 2 && (splinePoints.front() - splinePoints.back()).norm() <= epsilon)
 	{
-		throw std::runtime_error("Cannot get value from empty constant-speed spline. Use non-default constructor to provide points.");
+		splinePoints.pop_back();
 	}
-	
-	if(time < 0.0 || time > duration)
+
+	if(this->closed && splinePoints.size() < 3)
 	{
-		throw std::runtime_error("Value requested at time=" + std::to_string(time) + ". Time must be between 0.0 and " + std::to_string(duration) + ".");
+		throw std::runtime_error("Closed spline requires at least three distinct points.");
 	}
-	
-	return parametrizedSpline.getValue(computeParameterValue(time));
+
+	std::vector<T> parameterValues = { 0 };
+	for(size_t i = 1; i < splinePoints.size(); i++)
+	{
+		parameterValues.push_back(parameterValues[i - 1] + (splinePoints[i] - splinePoints[i - 1]).norm());
+	}
+
+	parametrizedSpline = ParametrizedSpline(parameterValues, splinePoints, this->closed);
+	duration = parametrizedSpline.getLength() / speed;
+	initialized = true;
 }
 
 template<typename T>
 T simpline<T>::ConstantSpeedSpline::computeParameterValue(const T& time) const
 {
-	if(timeParameterValues.find(time) != timeParameterValues.end())
+	if(time <= 0)
 	{
-		return timeParameterValues.at(time);
+		return parametrizedSpline.getStartParameterValue();
 	}
-	
-	const auto nextTimeParameterValue = timeParameterValues.upper_bound(time);
-	const auto previousTimeParameterValue = std::prev(nextTimeParameterValue);
-	const T wantedSplineLength = (speed * time) - parametrizedSpline.getLength(0, previousTimeParameterValue->second);
-	
-	if(wantedSplineLength <= 0)
+
+	if(time >= duration)
 	{
-		return previousTimeParameterValue->second;
+		return closed ? parametrizedSpline.getStartParameterValue() : parametrizedSpline.getEndParameterValue();
 	}
-	
-	// bisection method
-	T lowerBoundT = previousTimeParameterValue->second;
-	T upperBoundT = nextTimeParameterValue->second;
-	
-	while(upperBoundT - lowerBoundT > epsilon)
+
+	const T targetLength = speed * time;
+	T lowerBound = parametrizedSpline.getStartParameterValue();
+	T upperBound = parametrizedSpline.getEndParameterValue();
+
+	while(upperBound - lowerBound > epsilon)
 	{
-		const T middleT = (lowerBoundT + upperBoundT) / 2;
-		const T lowerBoundSplineLength = parametrizedSpline.getLength(previousTimeParameterValue->second, lowerBoundT);
-		const T middleSplineLength = parametrizedSpline.getLength(previousTimeParameterValue->second, middleT);
-		
-		if((lowerBoundSplineLength - wantedSplineLength) * (middleSplineLength - wantedSplineLength) < 0)
+		const T middleValue = (lowerBound + upperBound) / 2;
+		const T middleLength = parametrizedSpline.getLengthFromStart(middleValue);
+		if(middleLength < targetLength)
 		{
-			upperBoundT = middleT;
+			lowerBound = middleValue;
 		}
 		else
 		{
-			lowerBoundT = middleT;
+			upperBound = middleValue;
 		}
 	}
-	
-	return (lowerBoundT + upperBoundT) / 2;
+
+	return (lowerBound + upperBound) / 2;
+}
+
+template<typename T>
+typename simpline<T>::Vector3 simpline<T>::ConstantSpeedSpline::getValue(const T& time) const
+{
+	if(!initialized)
+	{
+		throw std::runtime_error("Cannot get value from empty constant-speed spline. Use non-default constructor to provide points.");
+	}
+
+	if(time < 0.0 || time > duration)
+	{
+		throw std::runtime_error("Value requested at time=" + std::to_string(time) + ". Time must be between 0.0 and " + std::to_string(duration) + ".");
+	}
+
+	return parametrizedSpline.getValue(computeParameterValue(time));
 }
 
 template<typename T>
 typename simpline<T>::Vector3 simpline<T>::ConstantSpeedSpline::getGradient(const T& time) const
 {
-	if(timeParameterValues.size() == 0)
+	if(!initialized)
 	{
 		throw std::runtime_error("Cannot get gradient from empty constant-speed spline. Use non-default constructor to provide points.");
 	}
-	
+
 	if(time < 0.0 || time > duration)
 	{
 		throw std::runtime_error("Gradient requested at time=" + std::to_string(time) + ". Time must be between 0.0 and " + std::to_string(duration) + ".");
 	}
-	
+
 	return parametrizedSpline.getGradient(computeParameterValue(time)).normalized() * speed;
+}
+
+template<typename T>
+typename simpline<T>::Vector3 simpline<T>::ConstantSpeedSpline::getSecondDerivative(const T& time) const
+{
+	if(!initialized)
+	{
+		throw std::runtime_error("Cannot get second derivative from empty constant-speed spline. Use non-default constructor to provide points.");
+	}
+
+	if(time < 0.0 || time > duration)
+	{
+		throw std::runtime_error("Second derivative requested at time=" + std::to_string(time) + ". Time must be between 0.0 and " + std::to_string(duration) + ".");
+	}
+
+	if(duration <= epsilon)
+	{
+		return simpline<T>::Vector3::Zero();
+	}
+
+	const T parameterValue = computeParameterValue(time);
+	const typename simpline<T>::Vector3 firstParameterDerivative = parametrizedSpline.getGradient(parameterValue);
+	const typename simpline<T>::Vector3 secondParameterDerivative = parametrizedSpline.getSecondDerivative(parameterValue);
+	const T firstNormSquared = firstParameterDerivative.squaredNorm();
+	if(firstNormSquared <= epsilon)
+	{
+		return simpline<T>::Vector3::Zero();
+	}
+
+	const T projectionFactor = firstParameterDerivative.dot(secondParameterDerivative) / (firstNormSquared * firstNormSquared);
+	return (speed * speed) * ((secondParameterDerivative / firstNormSquared) - (firstParameterDerivative * projectionFactor));
 }
 
 template<typename T>
 T simpline<T>::ConstantSpeedSpline::getLength() const
 {
-	if(timeParameterValues.size() == 0)
+	if(!initialized)
 	{
 		throw std::runtime_error("Cannot get length of empty constant-speed spline. Use non-default constructor to provide points.");
 	}
-	
+
 	return duration * speed;
 }
 
 template<typename T>
 T simpline<T>::ConstantSpeedSpline::getLength(const T& startTime, const T& endTime) const
 {
-	if(timeParameterValues.size() == 0)
+	if(!initialized)
 	{
 		throw std::runtime_error("Cannot get length of empty constant-speed spline. Use non-default constructor to provide points.");
 	}
-	
+
 	if(startTime > endTime)
 	{
 		throw std::runtime_error("Length requested from time=" + std::to_string(startTime) + " to time=" + std::to_string(endTime) +
-								 ". End time must be greater or equal to start time.");
+							 ". End time must be greater or equal to start time.");
 	}
-	
+
 	if(startTime < 0.0 || endTime > duration)
 	{
 		throw std::runtime_error("Length requested from time=" + std::to_string(startTime) + " to time=" + std::to_string(endTime) +
-								 ". Time must be between 0.0 and " + std::to_string(duration) + ".");
+							 ". Time must be between 0.0 and " + std::to_string(duration) + ".");
 	}
-	
+
 	return (endTime - startTime) * speed;
+}
+
+template<typename T>
+T simpline<T>::ConstantSpeedSpline::getLengthFromStart(const T& time) const
+{
+	return getLength(0.0, time);
+}
+
+template<typename T>
+T simpline<T>::ConstantSpeedSpline::getClosestTime(const simpline<T>::Vector3& queryPoint, const size_t& coarseSamples) const
+{
+	if(!initialized)
+	{
+		throw std::runtime_error("Cannot get closest point from empty constant-speed spline. Use non-default constructor to provide points.");
+	}
+
+	const size_t sampleCount = std::max(std::max(static_cast<size_t>(3), coarseSamples), static_cast<size_t>(60));
+	const T step = duration / static_cast<T>(sampleCount - 1);
+
+	size_t bestSampleIndex = 0;
+	T bestDistanceSquared = std::numeric_limits<T>::infinity();
+	for(size_t i = 0; i < sampleCount; i++)
+	{
+		const T timeSample = step * static_cast<T>(i);
+		const T distanceSquared = (getValue(timeSample) - queryPoint).squaredNorm();
+		if(distanceSquared < bestDistanceSquared)
+		{
+			bestDistanceSquared = distanceSquared;
+			bestSampleIndex = i;
+		}
+	}
+
+	const size_t leftSampleIndex = (bestSampleIndex == 0) ? bestSampleIndex : bestSampleIndex - 1;
+	const size_t rightSampleIndex = std::min(bestSampleIndex + 1, sampleCount - 1);
+	T leftBound = step * static_cast<T>(leftSampleIndex);
+	T rightBound = step * static_cast<T>(rightSampleIndex);
+
+	if(rightBound <= leftBound)
+	{
+		return leftBound;
+	}
+
+	const T phi = (1.0 + std::sqrt(5.0)) / 2.0;
+	for(size_t i = 0; i < 50; i++)
+	{
+		const T middleLeft = rightBound - ((rightBound - leftBound) / phi);
+		const T middleRight = leftBound + ((rightBound - leftBound) / phi);
+		const T distanceLeftSquared = (getValue(middleLeft) - queryPoint).squaredNorm();
+		const T distanceRightSquared = (getValue(middleRight) - queryPoint).squaredNorm();
+		if(distanceLeftSquared < distanceRightSquared)
+		{
+			rightBound = middleRight;
+		}
+		else
+		{
+			leftBound = middleLeft;
+		}
+	}
+
+	return (leftBound + rightBound) / 2;
+}
+
+template<typename T>
+typename simpline<T>::Vector3 simpline<T>::ConstantSpeedSpline::getClosestPoint(const simpline<T>::Vector3& queryPoint, const size_t& coarseSamples) const
+{
+	if(!initialized)
+	{
+		throw std::runtime_error("Cannot get closest point from empty constant-speed spline. Use non-default constructor to provide points.");
+	}
+
+	return parametrizedSpline.getClosestPoint(queryPoint, coarseSamples);
+}
+
+template<typename T>
+T simpline<T>::ConstantSpeedSpline::getClosestDistance(const simpline<T>::Vector3& queryPoint, const size_t& coarseSamples) const
+{
+	if(!initialized)
+	{
+		throw std::runtime_error("Cannot get closest distance from empty constant-speed spline. Use non-default constructor to provide points.");
+	}
+
+	return parametrizedSpline.getClosestDistance(queryPoint, coarseSamples);
+}
+
+template<typename T>
+std::vector<typename simpline<T>::Vector3> simpline<T>::ConstantSpeedSpline::resampleByCount(const size_t& sampleCount, const bool& includeEndPoint) const
+{
+	if(!initialized)
+	{
+		throw std::runtime_error("Cannot resample empty constant-speed spline. Use non-default constructor to provide points.");
+	}
+
+	if(sampleCount == 0)
+	{
+		throw std::runtime_error("Sample count must be above zero.");
+	}
+
+	if(!closed && sampleCount < 2)
+	{
+		throw std::runtime_error("At least two samples are required for non-closed spline resampling by count.");
+	}
+
+	std::vector<typename simpline<T>::Vector3> resampledPoints;
+	resampledPoints.reserve(sampleCount);
+	if(sampleCount == 1)
+	{
+		resampledPoints.push_back(getValue(0.0));
+		return resampledPoints;
+	}
+
+	const T denominator = includeEndPoint ? static_cast<T>(sampleCount - 1) : static_cast<T>(sampleCount);
+	for(size_t i = 0; i < sampleCount; i++)
+	{
+		T fraction = static_cast<T>(i) / denominator;
+		if(includeEndPoint && i == sampleCount - 1)
+		{
+			fraction = 1.0;
+		}
+		resampledPoints.push_back(getValue(fraction * duration));
+	}
+
+	return resampledPoints;
+}
+
+template<typename T>
+std::vector<typename simpline<T>::Vector3> simpline<T>::ConstantSpeedSpline::resampleByDistance(const T& distanceStep, const bool& includeEndPoint) const
+{
+	if(!initialized)
+	{
+		throw std::runtime_error("Cannot resample empty constant-speed spline. Use non-default constructor to provide points.");
+	}
+
+	if(distanceStep <= 0)
+	{
+		throw std::runtime_error("Distance step must be above zero.");
+	}
+
+	std::vector<typename simpline<T>::Vector3> resampledPoints;
+	const T totalLength = getLength();
+	if(totalLength <= epsilon)
+	{
+		resampledPoints.push_back(getValue(0.0));
+		return resampledPoints;
+	}
+
+	for(T distance = 0.0; distance < totalLength; distance += distanceStep)
+	{
+		resampledPoints.push_back(getValue(distance / speed));
+	}
+
+	if(includeEndPoint)
+	{
+		resampledPoints.push_back(getValue(duration));
+	}
+
+	return resampledPoints;
 }
 
 template<typename T>
 T simpline<T>::ConstantSpeedSpline::getSpeed() const
 {
-	if(timeParameterValues.size() == 0)
+	if(!initialized)
 	{
 		throw std::runtime_error("Cannot get speed of empty constant-speed spline. Use non-default constructor to provide points.");
 	}
-	
+
 	return speed;
 }
 
 template<typename T>
 T simpline<T>::ConstantSpeedSpline::getDuration() const
 {
-	if(timeParameterValues.size() == 0)
+	if(!initialized)
 	{
 		throw std::runtime_error("Cannot get duration of empty constant-speed spline. Use non-default constructor to provide points.");
 	}
-	
+
 	return duration;
+}
+
+template<typename T>
+bool simpline<T>::ConstantSpeedSpline::isClosed() const
+{
+	return closed;
 }
 
 template class simpline<float>::ConstantSpeedSpline;
