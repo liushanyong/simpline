@@ -80,6 +80,11 @@ int main(int argc, char** argv)
 - Arc length from start:
   - `ParametrizedSpline::getLengthFromStart(parameterValue)`
   - `ConstantSpeedSpline::getLengthFromStart(time)`
+- Parameterization helpers:
+  - `ParametrizedSpline::getStartParameterValue()`
+  - `ParametrizedSpline::getEndParameterValue()`
+  - `ParametrizedSpline::isClosed()`
+  - `ConstantSpeedSpline::isClosed()`
 - Resampling:
   - `resampleByCount(sampleCount, includeEndPoint)`
   - `resampleByDistance(distanceStep, includeEndPoint)`

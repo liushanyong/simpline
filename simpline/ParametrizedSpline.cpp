@@ -145,12 +145,7 @@ simpline<T>::ParametrizedSpline::ParametrizedSpline(const std::vector<T>& parame
 		return;
 	}
 
-	const T meanInterval = (this->parameterValues.back() - this->parameterValues.front()) / static_cast<T>(this->parameterValues.size() - 1);
-	T closingInterval = (this->points.front() - this->points.back()).norm();
-	if(closingInterval <= epsilon)
-	{
-		closingInterval = meanInterval;
-	}
+	const T closingInterval = (this->parameterValues.back() - this->parameterValues.front()) / static_cast<T>(this->parameterValues.size() - 1);
 	if(closingInterval <= 0)
 	{
 		throw std::runtime_error("Failed to infer positive closing interval for closed spline.");
@@ -491,13 +486,25 @@ T simpline<T>::ParametrizedSpline::getLengthFromStart(const T& parameterValue) c
 		return getLength(parameterValues[0], parameterValue);
 	}
 
-	if(std::abs(parameterValue - parameterValues.back()) <= epsilon)
+	const T period = parameterValues.back() - parameterValues.front();
+	if(period <= 0)
 	{
-		return getLength();
+		throw std::runtime_error("Closed spline period is invalid.");
 	}
 
-	const T normalizedParameter = wrapParameterValue(parameterValue);
-	return getLengthInInterval(parameterValues.front(), normalizedParameter);
+	const T totalLength = getLengthInInterval(parameterValues.front(), parameterValues.back());
+	T normalizedDelta = std::fmod(parameterValue - parameterValues.front(), period);
+	if(normalizedDelta < 0)
+	{
+		normalizedDelta += period;
+	}
+
+	if(std::abs(normalizedDelta) <= epsilon && (parameterValue - parameterValues.front()) > 0)
+	{
+		return totalLength;
+	}
+
+	return getLengthInInterval(parameterValues.front(), parameterValues.front() + normalizedDelta);
 }
 
 template<typename T>
@@ -560,14 +567,9 @@ T simpline<T>::ParametrizedSpline::getClosestParameterValue(const simpline<T>::V
 		throw std::runtime_error("Cannot get closest point from empty parametrized spline. Use non-default constructor to provide points.");
 	}
 
-	if(coarseSamples < 3)
-	{
-		throw std::runtime_error("At least three coarse samples are required to estimate closest point.");
-	}
-
 	const T start = parameterValues.front();
 	const T end = parameterValues.back();
-	const size_t sampleCount = std::max(coarseSamples, (parameterValues.size() - 1) * static_cast<size_t>(20));
+	const size_t sampleCount = std::max(std::max(static_cast<size_t>(3), coarseSamples), (parameterValues.size() - 1) * static_cast<size_t>(20));
 	const T step = (end - start) / static_cast<T>(sampleCount - 1);
 
 	size_t bestSampleIndex = 0;

@@ -2,6 +2,7 @@
 #include "Constants.h"
 #include <cmath>
 #include <stdexcept>
+#include <limits>
 
 template<typename T>
 simpline<T>::ConstantSpeedSpline::ConstantSpeedSpline():
@@ -129,19 +130,17 @@ typename simpline<T>::Vector3 simpline<T>::ConstantSpeedSpline::getSecondDerivat
 		return simpline<T>::Vector3::Zero();
 	}
 
-	const T centralStep = std::min(std::max(duration * static_cast<T>(1e-3), static_cast<T>(epsilon)), duration / 2);
-	if(time >= centralStep && (time + centralStep) <= duration)
+	const T parameterValue = computeParameterValue(time);
+	const typename simpline<T>::Vector3 firstParameterDerivative = parametrizedSpline.getGradient(parameterValue);
+	const typename simpline<T>::Vector3 secondParameterDerivative = parametrizedSpline.getSecondDerivative(parameterValue);
+	const T firstNormSquared = firstParameterDerivative.squaredNorm();
+	if(firstNormSquared <= epsilon)
 	{
-		return (getGradient(time + centralStep) - getGradient(time - centralStep)) / (2.0 * centralStep);
+		return simpline<T>::Vector3::Zero();
 	}
 
-	const T oneSidedStep = std::min(std::max(duration * static_cast<T>(1e-3), static_cast<T>(epsilon)), duration);
-	if((time + oneSidedStep) <= duration)
-	{
-		return (getGradient(time + oneSidedStep) - getGradient(time)) / oneSidedStep;
-	}
-
-	return (getGradient(time) - getGradient(time - oneSidedStep)) / oneSidedStep;
+	const T projectionFactor = firstParameterDerivative.dot(secondParameterDerivative) / (firstNormSquared * firstNormSquared);
+	return (speed * speed) * ((secondParameterDerivative / firstNormSquared) - (firstParameterDerivative * projectionFactor));
 }
 
 template<typename T>
@@ -192,8 +191,50 @@ T simpline<T>::ConstantSpeedSpline::getClosestTime(const simpline<T>::Vector3& q
 		throw std::runtime_error("Cannot get closest point from empty constant-speed spline. Use non-default constructor to provide points.");
 	}
 
-	const T parameterValue = parametrizedSpline.getClosestParameterValue(queryPoint, coarseSamples);
-	return parametrizedSpline.getLengthFromStart(parameterValue) / speed;
+	const size_t sampleCount = std::max(std::max(static_cast<size_t>(3), coarseSamples), static_cast<size_t>(60));
+	const T step = duration / static_cast<T>(sampleCount - 1);
+
+	size_t bestSampleIndex = 0;
+	T bestDistanceSquared = std::numeric_limits<T>::infinity();
+	for(size_t i = 0; i < sampleCount; i++)
+	{
+		const T timeSample = step * static_cast<T>(i);
+		const T distanceSquared = (getValue(timeSample) - queryPoint).squaredNorm();
+		if(distanceSquared < bestDistanceSquared)
+		{
+			bestDistanceSquared = distanceSquared;
+			bestSampleIndex = i;
+		}
+	}
+
+	const size_t leftSampleIndex = (bestSampleIndex == 0) ? bestSampleIndex : bestSampleIndex - 1;
+	const size_t rightSampleIndex = std::min(bestSampleIndex + 1, sampleCount - 1);
+	T leftBound = step * static_cast<T>(leftSampleIndex);
+	T rightBound = step * static_cast<T>(rightSampleIndex);
+
+	if(rightBound <= leftBound)
+	{
+		return leftBound;
+	}
+
+	const T phi = (1.0 + std::sqrt(5.0)) / 2.0;
+	for(size_t i = 0; i < 50; i++)
+	{
+		const T middleLeft = rightBound - ((rightBound - leftBound) / phi);
+		const T middleRight = leftBound + ((rightBound - leftBound) / phi);
+		const T distanceLeftSquared = (getValue(middleLeft) - queryPoint).squaredNorm();
+		const T distanceRightSquared = (getValue(middleRight) - queryPoint).squaredNorm();
+		if(distanceLeftSquared < distanceRightSquared)
+		{
+			rightBound = middleRight;
+		}
+		else
+		{
+			leftBound = middleLeft;
+		}
+	}
+
+	return (leftBound + rightBound) / 2;
 }
 
 template<typename T>
